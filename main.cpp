@@ -1,13 +1,15 @@
 //=====[Libraries]=============================================================
 
-#include "smart_home_system.h"
+#include "control_temp_system.h"
+//#include mbed.h
 
 //=====[Main function, the program entry point after power on or reset]========
 
 int main()
 {
-    smartHomeSystemInit();
+    controlTempSystemInit();
     while (true) {
-        smartHomeSystemUpdate();
+        controlTempSystemUpdate();
     }
 }
+
