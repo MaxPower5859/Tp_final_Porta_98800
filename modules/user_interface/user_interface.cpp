@@ -2,347 +2,187 @@
 
 #include "mbed.h"
 #include "arm_book_lib.h"
-
 #include "user_interface.h"
-
-#include "code.h"
-#include "alarm.h"
-#include "smart_home_system.h"
-#include "fire_alarm.h"
-#include "intruder_alarm.h"
-#include "date_and_time.h"
-#include "temperature_sensor.h"
-#include "gas_sensor.h"
-#include "motion_sensor.h"
-#include "matrix_keypad.h"
 #include "display.h"
-#include "GLCD_fire_alarm.h"
-#include "GLCD_intruder_alarm.h"
-#include "motor.h"
-#include "gate.h"
-#include "light_system.h"
-#include "light_level_control.h"
+#include "control_temp_system.h"
+#include "temperature_sensor.h"
+#include "potentiometer.h"
+#include "stabilizer.h"
+#include "non_blocking_delay.h"
 
 //=====[Declaration of private defines]========================================
 
-#define DISPLAY_REFRESH_TIME_REPORT_MS 1000
-#define DISPLAY_REFRESH_TIME_ALARM_MS 300
-
-//=====[Declaration of private data types]=====================================
-
-typedef enum {
-    DISPLAY_ALARM_STATE,
-    DISPLAY_REPORT_STATE
-} displayState_t;
+#define DISPLAY_REFRESH_TIME_MS 1000
 
 //=====[Declaration and initialization of public global objects]===============
 
-InterruptIn gateOpenButton(PF_9);
-InterruptIn gateCloseButton(PF_8);
+DigitalOut regulationProblem(LED3);
+DigitalOut regulationOk(LED2);
+states_t peltier;
 
-DigitalOut incorrectCodeLed(LED3);
-DigitalOut systemBlockedLed(LED2);
+float tempSupDisplay;
+float tempInfDisplay;
+int contadorDisplay;
+int horas;
+int minutos;
+int segundos;
 
-//=====[Declaration of external public global variables]=======================
 
-//=====[Declaration and initialization of public global variables]=============
-
-char codeSequenceFromUserInterface[CODE_NUMBER_OF_KEYS];
-
-//=====[Declaration and initialization of private global variables]============
-
-static displayState_t displayState = DISPLAY_REPORT_STATE;
-static int displayFireAlarmGraphicSequence = 0;
-static int displayIntruderAlarmGraphicSequence = 0;
-static int displayRefreshTimeMs = DISPLAY_REFRESH_TIME_REPORT_MS;
-
-static bool incorrectCodeState = OFF;
-static bool systemBlockedState = OFF;
-
-static bool codeComplete = false;
-static int numberOfCodeChars = 0;
-
-//=====[Declarations (prototypes) of private functions]========================
-
-static void userInterfaceMatrixKeypadUpdate();
-static void incorrectCodeIndicatorUpdate();
-static void systemBlockedIndicatorUpdate();
-
-static void userInterfaceDisplayInit();
-static void userInterfaceDisplayUpdate();
-static void userInterfaceDisplayReportStateInit();
-static void userInterfaceDisplayReportStateUpdate();
-static void userInterfaceDisplayAlarmStateInit();
-static void userInterfaceDisplayAlarmStateUpdate();
-
-static void gateOpenButtonCallback();
-static void gateCloseButtonCallback();
-
-//=====[Implementations of public functions]===================================
-
-void userInterfaceInit()
-{
-    gateOpenButton.mode(PullUp);
-    gateCloseButton.mode(PullUp);
-
-    gateOpenButton.fall(&gateOpenButtonCallback);
-    gateCloseButton.fall(&gateCloseButtonCallback);
-    
-    incorrectCodeLed = OFF;
-    systemBlockedLed = OFF;
-    matrixKeypadInit( SYSTEM_TIME_INCREMENT_MS );
-    userInterfaceDisplayInit();
-    
-    lightLevelControlInit();
-}
-
-void userInterfaceUpdate()
-{
-    userInterfaceMatrixKeypadUpdate();
-    incorrectCodeIndicatorUpdate();
-    systemBlockedIndicatorUpdate();
-    userInterfaceDisplayUpdate();
-    lightLevelControlUpdate();
-}
-
-bool incorrectCodeStateRead()
-{
-    return incorrectCodeState;
-}
-
-void incorrectCodeStateWrite( bool state )
-{
-    incorrectCodeState = state;
-}
-
-bool systemBlockedStateRead()
-{
-    return systemBlockedState;
-}
-
-void systemBlockedStateWrite( bool state )
-{
-    systemBlockedState = state;
-}
-
-bool userInterfaceCodeCompleteRead()
-{
-    return codeComplete;
-}
-
-void userInterfaceCodeCompleteWrite( bool state )
-{
-    codeComplete = state;
-}
-
-//=====[Implementations of private functions]==================================
-
-static void userInterfaceMatrixKeypadUpdate()
-{
-    static int numberOfHashKeyReleased = 0;
-    char keyReleased = matrixKeypadUpdate();
-
-    if( keyReleased != '\0' ) {
-
-        if( alarmStateRead() && !systemBlockedStateRead() ) {
-            if( !incorrectCodeStateRead() ) {
-                codeSequenceFromUserInterface[numberOfCodeChars] = keyReleased;
-                numberOfCodeChars++;
-                if ( numberOfCodeChars >= CODE_NUMBER_OF_KEYS ) {
-                    codeComplete = true;
-                    numberOfCodeChars = 0;
-                }
-            } else {
-                if( keyReleased == '#' ) {
-                    numberOfHashKeyReleased++;
-                    if( numberOfHashKeyReleased >= 2 ) {
-                        numberOfHashKeyReleased = 0;
-                        numberOfCodeChars = 0;
-                        codeComplete = false;
-                        incorrectCodeState = OFF;
-                    }
-                }
-            }
-        } else if ( !systemBlockedStateRead() ) {
-            if( keyReleased == 'A' ) {
-                motionSensorActivate();
-            }
-            if( keyReleased == 'B' ) {
-                motionSensorDeactivate();
-            }
-            if( keyReleased == '1' ) {
-                lightSystemBrightnessChangeRGBFactor( RGB_LED_RED, true );
-            }
-            if( keyReleased == '2' ) {
-                lightSystemBrightnessChangeRGBFactor( RGB_LED_GREEN, true );
-            }
-            if( keyReleased == '3' ) {
-                lightSystemBrightnessChangeRGBFactor( RGB_LED_BLUE, true );
-            }
-            if( keyReleased == '4' ) {
-                lightSystemBrightnessChangeRGBFactor( RGB_LED_RED, false );
-            }
-            if( keyReleased == '5' ) {
-                lightSystemBrightnessChangeRGBFactor( RGB_LED_GREEN, false );
-            }
-            if( keyReleased == '6' ) {
-                lightSystemBrightnessChangeRGBFactor( RGB_LED_BLUE, false );
-            }
-        }
-    }
-}
-
-static void userInterfaceDisplayReportStateInit()
-{
-    displayState = DISPLAY_REPORT_STATE;
-    displayRefreshTimeMs = DISPLAY_REFRESH_TIME_REPORT_MS;
-
-    displayModeWrite( DISPLAY_MODE_CHAR );
-
-    displayClear();
-
+void userInterfaceDisplayInit(){
+    displayInit( DISPLAY_CONNECTION_I2C_PCF8574_IO_EXPANDER );
+     
     displayCharPositionWrite ( 0,0 );
-    displayStringWrite( "Temperature:" );
+    displayStringWrite( "Temp Seteada:" );
 
     displayCharPositionWrite ( 0,1 );
-    displayStringWrite( "Gas:" );
-
+    displayStringWrite( "Temp Camara:" );
+    
     displayCharPositionWrite ( 0,2 );
-    displayStringWrite( "Alarm:" );
+    displayStringWrite( "Peltier:" );
+
+    displayCharPositionWrite ( 0,3 );
+    displayStringWrite( "Tiempo Est:" );
 }
 
-static void userInterfaceDisplayReportStateUpdate()
-{
-    char temperatureString[3] = "";
-
-    sprintf(temperatureString, "%.0f", temperatureSensorReadCelsius());
-    displayCharPositionWrite ( 12,0 );
-    displayStringWrite( temperatureString );
-    displayCharPositionWrite ( 14,0 );
-    displayStringWrite( "'C" );
-
-    displayCharPositionWrite ( 4,1 );
-
-    if ( gasDetectorStateRead() ) {
-        displayStringWrite( "Detected    " );
-    } else {
-        displayStringWrite( "Not Detected" );
-    }
-    displayCharPositionWrite ( 6,2 );
-    displayStringWrite( "OFF" );
-}
-
-static void userInterfaceDisplayAlarmStateInit()
-{
-    displayState = DISPLAY_ALARM_STATE;
-    displayRefreshTimeMs = DISPLAY_REFRESH_TIME_ALARM_MS;
-
-    displayClear();
-
-    displayModeWrite( DISPLAY_MODE_GRAPHIC );
-
-    displayFireAlarmGraphicSequence = 0;
-}
-
-static void userInterfaceDisplayAlarmStateUpdate()
-{
-    if ( ( gasDetectedRead() ) || ( overTemperatureDetectedRead() ) ) {
-        switch( displayFireAlarmGraphicSequence ) {
-        case 0:
-            displayBitmapWrite( GLCD_fire_alarm[0] );
-            displayFireAlarmGraphicSequence++;
-            break;
-        case 1:
-            displayBitmapWrite( GLCD_fire_alarm[1] );
-            displayFireAlarmGraphicSequence++;
-            break;
-        case 2:
-            displayBitmapWrite( GLCD_fire_alarm[2] );
-            displayFireAlarmGraphicSequence++;
-            break;
-        case 3:
-            displayBitmapWrite( GLCD_fire_alarm[3] );
-            displayFireAlarmGraphicSequence = 0;
-            break;
-        default:
-            displayBitmapWrite( GLCD_ClearScreen );
-            displayFireAlarmGraphicSequence = 0;
-            break;
-        }
-    } else if ( intruderDetectedRead() ) {
-        switch( displayIntruderAlarmGraphicSequence ) {
-        case 0:
-            displayBitmapWrite( GLCD_intruder_alarm );
-            displayIntruderAlarmGraphicSequence++;
-            break;
-        case 1:
-        default:
-            displayBitmapWrite( GLCD_ClearScreen );
-            displayIntruderAlarmGraphicSequence = 0;
-            break;
-        }
-    }
-}
-
-static void userInterfaceDisplayInit()
-{
-    displayInit( DISPLAY_TYPE_GLCD_ST7920, DISPLAY_CONNECTION_SPI );
-    userInterfaceDisplayReportStateInit();
-}
-
-static void userInterfaceDisplayUpdate()
-{
+void userInterfaceDisplayUpdate(){
+    
     static int accumulatedDisplayTime = 0;
+    char temperatureString[4] = "";
+    float sup;
+    float inf;
+
+    temperatureSensors(sup,inf);
 
     if( accumulatedDisplayTime >=
-        displayRefreshTimeMs ) {
+        DISPLAY_REFRESH_TIME_MS ) {
 
         accumulatedDisplayTime = 0;
 
-        switch ( displayState ) {
-        case DISPLAY_REPORT_STATE:
-            userInterfaceDisplayReportStateUpdate();
+        sprintf(temperatureString, "%d", potenciometerReading());
+        displayCharPositionWrite ( 14,0 );
+        displayStringWrite( temperatureString );
 
-            if ( alarmStateRead() ) {
-                userInterfaceDisplayAlarmStateInit();
-            }
-            break;
+        sprintf(temperatureString, "%.1f", (sup+inf)/2);
+        displayCharPositionWrite ( 14,1 );
+        displayStringWrite( temperatureString );
+        //displayCharPositionWrite ( 14,0 );
+        //displayStringWrite( "'C" );
 
-        case DISPLAY_ALARM_STATE:
-            userInterfaceDisplayAlarmStateUpdate();
 
-            if ( !alarmStateRead() ) {
-                userInterfaceDisplayReportStateInit();
-            }
-            break;
-
-        default:
-            userInterfaceDisplayReportStateInit();
-            break;
+        sprintf(temperatureString, "%.1f", inf);
+        displayCharPositionWrite ( 9,2 );
+        peltier = statesRead();
+ /*        if(peltier = ENFRIANDO){
+            displayStringWrite( "Enfriando" );
+        }else{
+            displayStringWrite( "Calentando" );
+        } */
+        switch (peltier) {
+        case ENFRIANDO: displayStringWrite( "Enfriando" ); break;
+        case CALENTANDO: displayStringWrite( "Calentando" ); break;
+        default: displayStringWrite( "Apagado" ); break;
         }
+        
+        //displayStringWrite( "Enfriando" );
+        contadorDisplay = contadorValor();
+        horas = contadorDisplay / 3600;
+        minutos = (contadorDisplay % 3600) / 60;
+        segundos = (contadorDisplay % 3600) % 60;
+
+        sprintf(temperatureString, "%d", horas);
+
+        if(horas < 10){
+            displayCharPositionWrite ( 11,3 );
+            displayStringWrite( "0" );
+            displayCharPositionWrite ( 12,3 );
+            displayStringWrite( temperatureString );
+        }else{
+            displayCharPositionWrite ( 11,3 );
+            displayStringWrite( temperatureString );
+        }
+
+        displayCharPositionWrite ( 13,3 );
+        displayStringWrite( ":" );
+
+        sprintf(temperatureString, "%d", minutos);
+        if(minutos < 10){
+            displayCharPositionWrite ( 14,3 );
+            displayStringWrite( "0" );
+            displayCharPositionWrite ( 15,3 );
+            displayStringWrite( temperatureString );
+        }else{
+            displayCharPositionWrite ( 14,3 );
+            displayStringWrite( temperatureString );
+        }
+
+/*         displayCharPositionWrite ( 14,3 );
+        displayStringWrite( temperatureString ); */
+        displayCharPositionWrite ( 16,3 );
+        displayStringWrite( ":" );
+
+        sprintf(temperatureString, "%d", segundos);
+        if(segundos < 10){
+            displayCharPositionWrite ( 17,3 );
+            displayStringWrite( "0" );
+            displayCharPositionWrite ( 18,3 );
+            displayStringWrite( temperatureString );
+        }else{
+            displayCharPositionWrite ( 17,3 );
+            displayStringWrite( temperatureString );
+        }
+
+/*         sprintf(temperatureString, "%d", segundos);
+        displayCharPositionWrite ( 17,3 );
+        displayStringWrite( temperatureString ); */
+
 
     } else {
         accumulatedDisplayTime =
-            accumulatedDisplayTime + SYSTEM_TIME_INCREMENT_MS;
-    }
+            accumulatedDisplayTime + SYSTEM_TIME_INCREMENT_MS;        
+    } 
 }
 
-static void incorrectCodeIndicatorUpdate()
-{
-    incorrectCodeLed = incorrectCodeStateRead();
-}
+void userInterfaceDisplayUpdateNew(float &tsup,float &tinf){
+    
+    static int accumulatedDisplayTime = 0;
+    char temperatureString[4] = "";
+    //temperatureSensors(sup,inf);
+    if( accumulatedDisplayTime >=
+        DISPLAY_REFRESH_TIME_MS ) {
 
-static void systemBlockedIndicatorUpdate()
-{
-    systemBlockedLed = systemBlockedState;
-}
+        accumulatedDisplayTime = 0;
 
-static void gateOpenButtonCallback()
-{
-    gateOpen();
-}
+        sprintf(temperatureString, "%d", potenciometerReading());
+        displayCharPositionWrite ( 14,0 );
+        displayStringWrite( temperatureString );
 
-static void gateCloseButtonCallback()
-{
-    gateClose();
+        sprintf(temperatureString, "%.1f", (tsup+tinf)/2);
+        displayCharPositionWrite ( 14,1 );
+        displayStringWrite( temperatureString );
+        //displayCharPositionWrite ( 14,0 );
+        //displayStringWrite( "'C" );
+
+
+        
+        displayCharPositionWrite ( 9,2 );
+        peltier = statesRead();
+ /*        if(peltier = ENFRIANDO){
+            displayStringWrite( "Enfriando" );
+        }else{
+            displayStringWrite( "Calentando" );
+        } */
+        switch (peltier) {
+        case ENFRIANDO: displayStringWrite( "Enfriando" ); break;
+        case CALENTANDO: displayStringWrite( "Calentando" ); break;
+        default: displayStringWrite( "Apagado" ); break;
+        }
+        
+        //displayStringWrite( "Enfriando" );
+
+
+
+    } else {
+        accumulatedDisplayTime =
+            accumulatedDisplayTime + SYSTEM_TIME_INCREMENT_MS;        
+    } 
 }
